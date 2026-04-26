@@ -5,7 +5,7 @@ metadata:
   namespace: agentgateway-system
 spec:
   type: ExternalName
-  externalName: dev-88zsceyr.us.auth0.com
+  externalName: <your-auth0-domain>
   ports:
   - port: 443
     targetPort: 443

@@ -205,7 +205,7 @@ Run this once:
 ```bash
 security add-generic-password \
   -a "$USER" \
-  -s auth0-mcp-client-secret \
+  -s <your-secret-name> \
   -w "YOUR_CLIENT_SECRET_HERE" \
   -U
 ```
@@ -220,7 +220,7 @@ To verify it was stored:
 ```bash
 security find-generic-password \
   -a "$USER" \
-  -s auth0-mcp-client-secret \
+  -s <your-secret-name> \
   -w
 ```
 
@@ -460,7 +460,7 @@ Fill in your provider values. Do **not** put the client secret in this file. The
         "AUTH0_DOMAIN": "<your-tenant>.us.auth0.com",
         "AUTH0_CLIENT_ID": "<your-client-id>",
         "AUTH0_AUDIENCE": "https://mcp.gateway",
-        "AUTH0_SECRET_NAME": "auth0-mcp-client-secret",
+        "AUTH0_SECRET_NAME": "<your-secret-name>",
         "MCP_ENDPOINT": "http://localhost:8080/mcp"
       }
     }
@@ -652,7 +652,7 @@ kubectl logs deployment/mcp-server-everything \
 ```bash
 security find-generic-password \
   -a "$USER" \
-  -s auth0-mcp-client-secret \
+  -s <your-secret-name> \
   -w
 ```
 
