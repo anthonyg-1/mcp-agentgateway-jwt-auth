@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "everything": {
+      "command": "/path/to/scripts/mcp-client-auth0-wrapper.zsh",
+      "env": {
+        "AUTH0_DOMAIN": "<your-tenant>.us.auth0.com",
+        "AUTH0_CLIENT_ID": "<your-client-id>",
+        "AUTH0_AUDIENCE": "https://mcp.gateway",
+        "AUTH0_SECRET_NAME": "<your-secret-name>",
+        "MCP_ENDPOINT": "http://localhost:8080/mcp"
+      }
+    }
+  }
+}
