@@ -1,6 +1,6 @@
 # MCP on Kubernetes with agentgateway + JWT Auth
 
-This project demonstrates a local, production-inspired MCP (Model Context Protocol) security pattern:
+This project demonstrates a local, MCP (Model Context Protocol) security pattern:
 
 > Protect an MCP server behind **agentgateway**, require a valid OAuth/JWT access token, and keep the OAuth client secret out of the MCP host configuration file.
 
@@ -29,7 +29,7 @@ This project is useful for learning how to:
 - Put a gateway enforcement point in front of an MCP server.
 - Use OAuth 2.0 client credentials for headless MCP access.
 - Use a standards-based token endpoint to obtain a JWT access token.
-- Use a JWKS endpoint as the source of public signing keys for JWT validation.
+- Obtain a JWKS set and use as the source of public signing keys for JWT validation.
 - Validate JWTs at agentgateway before proxying MCP traffic.
 - Keep client secrets out of `.mcp.json` by retrieving them from macOS Keychain at runtime.
 - Run an HTTP-based MCP server behind Kubernetes Gateway API resources.
@@ -134,7 +134,11 @@ sequenceDiagram
 |   `-- claude_desktop_config.json       # Claude Desktop MCP config, no-auth variant
 |-- scripts/
 |   |-- mcp-client-auth0-wrapper.zsh     # Reads secret from Keychain, execs mcp-client.sh
-|   `-- mcp-client.sh                    # Fetches Auth0 JWT, launches supergateway
+|   |-- mcp-client.sh                    # Fetches Auth0 JWT, launches supergateway
+|   |-- New-JwtPolicyYaml.ps1            # Generates jwt-policy.yaml from live JWKS (PowerShell)
+|   |-- new_jwt_policy_yaml.py           # Generates jwt-policy.yaml from live JWKS (Python)
+|   `-- security_testing/
+|       `-- Test-JwtPolicy.ps1           # JWT policy test suite (PowerShell)
 `-- k8s/
     |-- mcp-server/
     |   |-- deployment.yaml              # MCP server pod using node:22-alpine + mcp-proxy
@@ -180,19 +184,55 @@ Note down:
 - **Client ID**
 - **Client Secret**
 
-### 1.3 Copy your JWKS
+### 1.3 Generate jwt-policy.yaml
 
-This project uses inline JWKS in `jwt-policy.yaml`.
+agentgateway v1.1.0 does not support pointing its JWT policy at a remote JWKS URI or an OpenID Connect well-known configuration URI. It cannot fetch public keys from `https://idp.example.com/.well-known/jwks.json` or `/.well-known/openid-configuration` at runtime. The signing keys must be embedded directly in the `jwt-policy.yaml` manifest under `jwks.inline`.
 
-For Auth0, fetch the JWKS with:
+This means you cannot simply reference your identity provider's JWKS endpoint in the policy. You must fetch the keys yourself and embed them in the manifest. Two scripts are provided to automate exactly that: each one fetches the public keys from your identity provider, constructs the full `AgentgatewayPolicy` manifest, and writes it to disk. Run the script once to generate the file, then re-run it whenever your identity provider rotates its signing keys.
 
-```bash
-curl -s "https://<your-domain>/.well-known/jwks.json"
+Use whichever script fits your environment — they produce identical output.
+
+#### PowerShell — `scripts/New-JwtPolicyYaml.ps1`
+
+Requires the `powershell-yaml` and `PSJsonWebToken` modules:
+
+```powershell
+Install-Module powershell-yaml, PSJsonWebToken
 ```
 
-Save the JSON output. You will paste it into `jwt-policy.yaml` in Step 5.
+Dot-source the file to load the function, then call it:
 
-For a different provider, use that provider's JWKS endpoint instead. Common locations include `/.well-known/jwks.json` or the `jwks_uri` advertised in the provider's OpenID Connect discovery document.
+```powershell
+. ./scripts/New-JwtPolicyYaml.ps1
+
+New-JwtPolicyYaml `
+    -Uri      "https://<your-domain>/.well-known/openid-configuration" `
+    -Issuer   "https://<your-domain>/" `
+    -Audiences "https://mcp.gateway" `
+    -OutputPath ./k8s/agentgateway/jwt-policy.yaml
+```
+
+`-Uri` accepts either a direct JWK Set URI (`.well-known/jwks.json`) or an OpenID Connect discovery document (`.well-known/openid-configuration`). The function resolves `jwks_uri` automatically when the discovery document form is used.
+
+#### Python — `scripts/new_jwt_policy_yaml.py`
+
+Requires Python 3 and PyYAML:
+
+```bash
+pip install pyyaml
+```
+
+```bash
+python3 scripts/new_jwt_policy_yaml.py \
+    --uri      "https://<your-domain>/.well-known/openid-configuration" \
+    --issuer   "https://<your-domain>/" \
+    --audiences "https://mcp.gateway" \
+    --output-path ./k8s/agentgateway/jwt-policy.yaml
+```
+
+Like the PowerShell version, `--uri` accepts either a JWKS URI or an OpenID Connect discovery document and follows `jwks_uri` automatically.
+
+The generated file is applied to the cluster in Step 5.
 
 ---
 
@@ -367,36 +407,7 @@ spec:
       kind: AgentgatewayBackend
 ```
 
-`k8s/agentgateway/jwt-policy.yaml` - enforces JWT authentication in **Strict** mode.
-
-Update `issuer`, `audiences`, and `jwks.inline` to match your authorization server and MCP gateway audience:
-
-```yaml
-apiVersion: agentgateway.dev/v1alpha1
-kind: AgentgatewayPolicy
-metadata:
-  name: jwt-auth-policy
-  namespace: agentgateway-system
-spec:
-  targetRefs:
-  - group: gateway.networking.k8s.io
-    kind: Gateway
-    name: agentgateway-proxy
-  traffic:
-    jwtAuthentication:
-      mode: Strict
-      providers:
-      - issuer: "https://<your-auth0-domain>/"
-        audiences:
-        - "https://mcp.gateway"
-        jwks:
-          inline: '<paste your JWKS JSON here>'
-```
-
-> **Why inline JWKS?**
-> For this local PoC, inline JWKS is the most reliable option. The `remote` JWKS approach requires agentgateway to fetch keys from an external HTTPS endpoint. With agentgateway v1.1.0, this did not work reliably through an ExternalName Service for Auth0 because TLS origination to the external HTTPS endpoint was not available in this setup.
->
-> This is an implementation detail of this demo, not a requirement of the pattern. In a future production-style version, revisit remote JWKS support or use an identity provider that is reachable from inside the cluster. Signing keys only need to be updated when the authorization server rotates them.
+`k8s/agentgateway/jwt-policy.yaml` - enforces JWT authentication in **Strict** mode with inline JWKS. This file is generated by the script in Step 1.3.
 
 `k8s/agentgateway/auth0-jwks-service.yaml` - scaffold for remote JWKS, not active in the current configuration. The file name uses Auth0 because this demo uses Auth0, but the concept applies to any external JWKS endpoint:
 
@@ -607,6 +618,45 @@ Expected:
 ```text
 authentication failure: token uses the unknown key "fake-key-id"
 ```
+
+### 8.3 Automated JWT policy tests
+
+`scripts/security_testing/Test-JwtPolicy.ps1` exercises the gateway's JWT enforcement with a structured test matrix. It requires the `PSJsonWebToken` module and a running agentgateway reachable at `http://localhost:8080`.
+
+```powershell
+Install-Module PSJsonWebToken
+```
+
+Set environment variables for your Auth0 tenant (or pass them as parameters):
+
+```powershell
+$env:AUTH0_DOMAIN        = '<your-domain>'
+$env:AUTH0_CLIENT_ID     = '<your-client-id>'
+$env:AUTH0_CLIENT_SECRET = '<your-client-secret>'
+$env:AUTH0_AUDIENCE      = 'https://mcp.gateway'
+```
+
+Run the suite:
+
+```powershell
+./scripts/security_testing/Test-JwtPolicy.ps1
+```
+
+Test matrix:
+
+| # | Scenario                       | Expected |
+|---|--------------------------------|----------|
+| 1 | No Authorization header        | 401      |
+| 2 | Garbage token                  | 401      |
+| 3 | HS256 token (algorithm confusion) | 401   |
+| 4 | Expired JWT                    | 401      |
+| 5 | Wrong audience                 | 401      |
+| 6 | Wrong issuer                   | 401      |
+| 7 | Valid Auth0 JWT                | 2xx      |
+
+The script prints colored pass/fail output for each case and exits with a non-zero code if any test fails, making it suitable for use in a CI pipeline.
+
+If `AUTH0_DOMAIN`, `AUTH0_CLIENT_ID`, or `AUTH0_CLIENT_SECRET` are not set, the live-token tests (cases 1–6 still run using locally constructed tokens; case 7 is skipped).
 
 ---
 
