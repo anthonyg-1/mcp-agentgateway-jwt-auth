@@ -1,0 +1,19 @@
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: jwt-auth-policy
+  namespace: agentgateway-system
+spec:
+  targetRefs:
+  - group: gateway.networking.k8s.io
+    kind: Gateway
+    name: agentgateway-proxy
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+      - issuer: "https://dev-88zsceyr.us.auth0.com/"
+        audiences:
+        - "https://mcp.gateway"
+        jwks:
+          inline: '{"keys":[{"kty":"RSA","use":"sig","n":"5nkctNlsh_24qzaVjGiDEpknsiLcaDJqldrOHihTCsAOub4DOKpXZ4RbZn0Zd_5FYQKl3PAbknVeq4prvvXyRIbn_pm2NYBIkxkU_xoo9hQjP4L0JMsYxHq4BOHuaNGO7uAQzSwTlvNSKaC9ql4AOzvv_4VW3laYVLb-LIpmUPtEv9uUYVNBFdWvS6aLTE46Zy7AI6KwpAhsSQqy8HW9_I_GyEg4kmx-5pIUgtTvhdpFn6Qj8Hc1eJ6PkVSptB_QpN6TO8OD7WWODevdFAmlY63HkQa7PoSwQo-Bv9goJRj1Nh4v2DmpQ8eGT2h-oHfHC1cjv0pBmiD4-MjEW2nViQ","e":"AQAB","kid":"TqpTZkpj8QSTNVSOpFeXF","alg":"RS256"},{"kty":"RSA","use":"sig","n":"wPAYhHrv4EG6gUiZ3eDh0ai-CCHmiY7Gu6CSaZvfee3tWJivCftmuAab_mc3uY8DDORBm664Kt690Dsx1aJC29coPYOlSzJjIiT7C9IJde_azc_uGcUQSosmD87pqfW67p3wGqe7Q4inXjWfKeKFVBwih3hv8o8Y2bAxN2wGKT6en-_m8IhrV5ITQHJgHF6hknT2JIkdKmks99cPORo230kXSg4TlTexzua6_ZYzhXCf80bfhuNn4qAHhbOITyO-rZstAu2ZzPHn-RB2rOua1BwxH3yOb9QElLRUEeMAxdSdAgiho2V8OkwQy1QQf__5qb1zOkeTuYI9kLpf5HDeqw","e":"AQAB","kid":"eJ-HyjZ2_yBCqo4PFbq_H","alg":"RS256"}]}'

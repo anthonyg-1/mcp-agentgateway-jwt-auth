@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mcp-server-everything
+  namespace: agentgateway-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mcp-server-everything
+  template:
+    metadata:
+      labels:
+        app: mcp-server-everything
+    spec:
+      containers:
+      - name: mcp-server
+        image: node:22-alpine
+        command: ["npx", "-y", "mcp-proxy", "--port", "8080", "--", "npx", "-y", "@modelcontextprotocol/server-everything"]
+        ports:
+        - containerPort: 8080
