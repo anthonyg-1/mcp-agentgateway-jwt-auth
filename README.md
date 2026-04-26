@@ -4,13 +4,15 @@ This project demonstrates a local, production-inspired MCP (Model Context Protoc
 
 > Protect an MCP server behind **agentgateway**, require a valid OAuth/JWT access token, and keep the OAuth client secret out of the MCP host configuration file.
 
+This demo uses **Auth0** as the OAuth 2.0/OIDC authorization server, but the pattern is vendor-neutral. Any authorization server or identity provider that supports the OAuth 2.0 client credentials grant and publishes signing keys through a JWKS endpoint can be used.
+
 In this setup:
 
 - An MCP server (`@modelcontextprotocol/server-everything`) runs inside a local **minikube** Kubernetes cluster.
 - **agentgateway** acts as an MCP-aware gateway in front of the server.
 - **Claude Code** acts as the MCP host.
-- A local wrapper script retrieves the Auth0 client secret from the **macOS Keychain** at runtime.
-- The MCP launcher exchanges the client credentials for a short-lived Auth0 access token.
+- A local wrapper script retrieves the OAuth client secret from the **macOS Keychain** at runtime.
+- The MCP launcher exchanges the client credentials for a short-lived JWT access token from the authorization server.
 - **supergateway** bridges Claude Code's stdio MCP connection to the HTTP MCP endpoint exposed through agentgateway.
 - agentgateway validates the JWT before forwarding MCP traffic to the backend MCP server.
 
@@ -26,10 +28,27 @@ This project is useful for learning how to:
 
 - Put a gateway enforcement point in front of an MCP server.
 - Use OAuth 2.0 client credentials for headless MCP access.
+- Use a standards-based token endpoint to obtain a JWT access token.
+- Use a JWKS endpoint as the source of public signing keys for JWT validation.
 - Validate JWTs at agentgateway before proxying MCP traffic.
 - Keep client secrets out of `.mcp.json` by retrieving them from macOS Keychain at runtime.
 - Run an HTTP-based MCP server behind Kubernetes Gateway API resources.
 - Bridge a local stdio MCP host to an HTTP MCP endpoint using `supergateway`.
+
+## Identity Provider Requirements
+
+Auth0 is used in this repo because it is easy to set up for a local demo. It is not required by the pattern.
+
+The identity provider or authorization server needs to provide:
+
+- An **OAuth 2.0 token endpoint** that supports the `client_credentials` grant.
+- A **JWT access token** issued for the MCP gateway audience.
+- A **JWKS endpoint** that publishes the public signing keys used to validate the JWT.
+- Stable `issuer` and `audience` values that agentgateway can validate.
+
+Examples of suitable providers include Auth0, Microsoft Entra ID, Okta, Keycloak, Ping Identity, or another OAuth 2.0/OIDC-compatible authorization server.
+
+> The environment variable names in this repo use `AUTH0_*` because the demo was built with Auth0. For another provider, you can either reuse those variable names or rename them to something more generic, such as `OIDC_DOMAIN`, `OAUTH_CLIENT_ID`, and `OAUTH_AUDIENCE`.
 
 ## What This Does Not Demonstrate
 
@@ -41,7 +60,7 @@ This is intentionally scoped. It does **not** demonstrate:
 - Production-grade secret rotation.
 - Enterprise managed identity or workload identity.
 - Full MCP policy enforcement, such as per-tool authorization or data loss prevention.
-- Remote JWKS fetching in agentgateway v1.1.0 for Auth0 over an ExternalName Service.
+- Remote JWKS fetching in agentgateway v1.1.0 for an external HTTPS JWKS endpoint over an ExternalName Service.
 
 For production, prefer workload identity, managed identity, or `private_key_jwt` where possible instead of a long-lived client secret.
 
@@ -55,18 +74,18 @@ sequenceDiagram
     participant W as mcp-client-auth0-wrapper.zsh
     participant KC as macOS Keychain
     participant S as mcp-client.sh
-    participant A0 as Auth0 Token Endpoint
+    participant A0 as OAuth Token Endpoint<br/>(Auth0 in this demo)
     participant SG as supergateway<br/>(stdio-to-HTTP bridge)
     participant AG as agentgateway<br/>(Kubernetes)
     participant MS as mcp-server-everything<br/>(Kubernetes)
 
     CC->>W: Spawn configured MCP server command
-    W->>KC: Read client_secret using AUTH0_SECRET_NAME
+    W->>KC: Read OAuth client_secret using AUTH0_SECRET_NAME
     KC-->>W: client_secret
     W->>S: exec mcp-client.sh<br/>(AUTH0_CLIENT_SECRET in env)
 
     S->>A0: POST /oauth/token<br/>grant_type=client_credentials
-    A0-->>S: access_token JWT
+    A0-->>S: JWT access token
 
     S->>SG: exec supergateway --streamableHttp MCP_ENDPOINT<br/>--header "Authorization: Bearer <token>"
 
@@ -91,17 +110,17 @@ sequenceDiagram
 
 ## Prerequisites
 
-| Tool | Version used | Install |
-|------|-------------|---------|
-| Docker Desktop | 28.x+ | https://docs.docker.com/get-docker/ |
-| minikube | 1.38.x+ | https://minikube.sigs.k8s.io/docs/start/ |
-| kubectl | 1.36.x+ | https://kubernetes.io/docs/tasks/tools/ |
-| helm | 4.x+ | https://helm.sh/docs/intro/install/ |
-| Node.js + npx | 22.x+ | https://nodejs.org/ |
-| jq | current | `brew install jq` |
-| Auth0 account | free tier is sufficient | https://auth0.com |
+| Tool           | Version used                          | Install                                  |
+| -------------- | ------------------------------------- | ---------------------------------------- |
+| Docker Desktop | 28.x+                                 | https://docs.docker.com/get-docker/      |
+| minikube       | 1.38.x+                               | https://minikube.sigs.k8s.io/docs/start/ |
+| kubectl        | 1.36.x+                               | https://kubernetes.io/docs/tasks/tools/  |
+| helm           | 4.x+                                  | https://helm.sh/docs/intro/install/      |
+| Node.js + npx  | 22.x+                                 | https://nodejs.org/                      |
+| jq             | current                               | `brew install jq`                        |
+| Auth0 account  | free tier is sufficient for this demo | https://auth0.com                        |
 
-> **macOS only:** this repo stores the Auth0 client secret in the macOS Keychain. The wrapper script uses the `security` CLI, which ships with macOS.
+> **macOS only:** this repo stores the OAuth client secret in the macOS Keychain. The wrapper script uses the `security` CLI, which ships with macOS.
 
 ---
 
@@ -130,17 +149,26 @@ sequenceDiagram
 
 ---
 
-## Step 1 - Auth0 Setup
+## Step 1 - Identity Provider Setup (Auth0 Example)
+
+This demo uses Auth0 as the authorization server. The same pattern works with any OAuth 2.0/OIDC-compatible provider that can issue JWT access tokens and publish signing keys through JWKS.
+
+For a different provider, create the equivalent of:
+
+- a protected API/resource representing the MCP gateway audience
+- a machine-to-machine OAuth client
+- a token endpoint that supports `client_credentials`
+- a JWKS endpoint for JWT signature validation
 
 ### 1.1 Create an API
 
 In the Auth0 dashboard, create a new **API**:
 
-| Field | Value |
-|---|---|
-| Name | `MCP Gateway` |
+| Field                 | Value                 |
+| --------------------- | --------------------- |
+| Name                  | `MCP Gateway`         |
 | Identifier / Audience | `https://mcp.gateway` |
-| Signing Algorithm | RS256 |
+| Signing Algorithm     | RS256                 |
 
 ### 1.2 Create a Machine-to-Machine Application
 
@@ -156,7 +184,7 @@ Note down:
 
 This project uses inline JWKS in `jwt-policy.yaml`.
 
-Fetch your Auth0 JWKS:
+For Auth0, fetch the JWKS with:
 
 ```bash
 curl -s "https://<your-domain>/.well-known/jwks.json"
@@ -164,11 +192,13 @@ curl -s "https://<your-domain>/.well-known/jwks.json"
 
 Save the JSON output. You will paste it into `jwt-policy.yaml` in Step 5.
 
+For a different provider, use that provider's JWKS endpoint instead. Common locations include `/.well-known/jwks.json` or the `jwks_uri` advertised in the provider's OpenID Connect discovery document.
+
 ---
 
 ## Step 2 - Store the Client Secret in macOS Keychain
 
-The client secret is **not stored in `.mcp.json`**. The wrapper script retrieves it at runtime using the macOS `security` CLI.
+The OAuth client secret is **not stored in `.mcp.json`**. The wrapper script retrieves it at runtime using the macOS `security` CLI.
 
 Run this once:
 
@@ -339,7 +369,7 @@ spec:
 
 `k8s/agentgateway/jwt-policy.yaml` - enforces JWT authentication in **Strict** mode.
 
-Update `issuer`, `audiences`, and `jwks.inline` to match your Auth0 tenant and API:
+Update `issuer`, `audiences`, and `jwks.inline` to match your authorization server and MCP gateway audience:
 
 ```yaml
 apiVersion: agentgateway.dev/v1alpha1
@@ -366,9 +396,9 @@ spec:
 > **Why inline JWKS?**
 > For this local PoC, inline JWKS is the most reliable option. The `remote` JWKS approach requires agentgateway to fetch keys from an external HTTPS endpoint. With agentgateway v1.1.0, this did not work reliably through an ExternalName Service for Auth0 because TLS origination to the external HTTPS endpoint was not available in this setup.
 >
-> This means signing keys only need to be updated when Auth0 rotates them. For a future production-style version, revisit remote JWKS support or use an in-cluster identity provider such as Keycloak.
+> This is an implementation detail of this demo, not a requirement of the pattern. In a future production-style version, revisit remote JWKS support or use an identity provider that is reachable from inside the cluster. Signing keys only need to be updated when the authorization server rotates them.
 
-`k8s/agentgateway/auth0-jwks-service.yaml` - scaffold for remote JWKS, not active in the current configuration:
+`k8s/agentgateway/auth0-jwks-service.yaml` - scaffold for remote JWKS, not active in the current configuration. The file name uses Auth0 because this demo uses Auth0, but the concept applies to any external JWKS endpoint:
 
 ```yaml
 apiVersion: v1
@@ -417,9 +447,9 @@ http://localhost:8080/mcp
 
 ### Claude Code
 
-`.mcp.json` configures Claude Code to launch the Auth0 wrapper as the MCP server command.
+`.mcp.json` configures Claude Code to launch the OAuth wrapper as the MCP server command.
 
-Fill in your Auth0 values. Do **not** put the client secret in this file.
+Fill in your provider values. Do **not** put the client secret in this file. The example variable names use `AUTH0_*` because this demo uses Auth0.
 
 ```json
 {
@@ -469,7 +499,7 @@ The auth launcher uses two scripts.
 
 ### `scripts/mcp-client-auth0-wrapper.zsh`
 
-This script retrieves the Auth0 client secret from macOS Keychain and then execs the next stage.
+This script retrieves the OAuth client secret from macOS Keychain and then execs the next stage.
 
 ```zsh
 #!/bin/zsh
@@ -496,7 +526,7 @@ exec /path/to/scripts/mcp-client.sh
 
 ### `scripts/mcp-client.sh`
 
-This script exchanges the client credentials for a short-lived Auth0 JWT, then starts `supergateway`.
+This script exchanges the client credentials for a short-lived JWT access token, then starts `supergateway`.
 
 ```bash
 #!/bin/bash
@@ -520,7 +550,7 @@ exec npx -y supergateway \
 
 ### 8.1 Confirm a valid token is accepted
 
-Fetch a token from Auth0 and use it in a request:
+Fetch a token from the authorization server and use it in a request. This example uses Auth0:
 
 ```bash
 TOKEN="$(curl -sf -X POST "https://<your-domain>/oauth/token" \
@@ -587,7 +617,7 @@ This repo demonstrates a useful gateway pattern, but there are important boundar
 - **Client credentials is application identity.** The gateway authenticates the MCP host/application, not the individual user.
 - **The client secret still exists at runtime.** Keychain keeps it out of `.mcp.json` and out of the repo, but the wrapper exports it to the child process so `mcp-client.sh` can request a token.
 - **The JWT should be short-lived.** Do not rely on a long-lived bearer token.
-- **Validate audience and issuer.** The token should be issued by the expected Auth0 tenant and intended for the MCP gateway audience.
+- **Validate audience and issuer.** The token should be issued by the expected authorization server and intended for the MCP gateway audience.
 - **Do not expose this over plain HTTP in production.** This demo uses local `kubectl port-forward` and `localhost`.
 - **Add policy for real use.** JWT validation is only the first layer. Real deployments should also consider per-client authorization, per-tool authorization, logging, rate limiting, egress controls, and data handling policies.
 
