@@ -6,6 +6,9 @@ This project demonstrates a local, MCP (Model Context Protocol) security pattern
 
 This demo uses **Auth0** as the OAuth 2.0/OIDC authorization server, but the pattern is vendor-neutral. Any authorization server or identity provider that supports the OAuth 2.0 client credentials grant and publishes signing keys through a JWKS endpoint can be used.
 
+### Tested on
+:apple: `MacOS`
+
 In this setup:
 
 - An MCP server (`@modelcontextprotocol/server-everything`) runs inside a local **minikube** Kubernetes cluster.
